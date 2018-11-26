@@ -1,0 +1,398 @@
+---
+title: "Interim_Report - NLP Text Prediction"
+author: 'N'
+date: "November 23, 2018"
+output: html_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( echo = TRUE)
+```
+
+```{r hide_one, warning=FALSE, message=FALSE, include=FALSE}
+library(stylo)      #corpus and ngrams
+library(tm)         #NLP/text analysis
+library(wordcloud2) #create the word cloud
+```
+
+
+## Initial Analysis
+
+Our initial analysis created 3 raw files of complete input text {twitter, blog, news} which was then sampled to create c.400k samples of each {twitterSample, blogSample, newsSample} and 3 test files of the same size {twitterTest, blogTest, newsTest}.
+
+At this point the initial view of the predictor was that some data features needed cleaning:
+ - emojis were removed to allow functions to run
+ - text was converted into UTF-8 format to remove non-alphabet charectors
+ - all text was put to lower case
+ - some spurious stop-words were excluded
+ - all stopwords were removed in one version, but this was later found to be un-helpful to the prediction work
+ - @user and #hashtags were removed
+
+Some initial counts of the full data (number of records and longest record) are shown below:
+```{r counts, cache=TRUE, eval=FALSE}
+t1<-length(twitter);t2<-max(nchar(as.character(twitter)));
+n1<-length(news);n2<-max(nchar(as.character(news)));
+b1<-length(blog);b2<-max(nchar(as.character(blog)));
+t1;n1;b1; # number of rows
+t2;n2;b2; #mximum row length
+```
+
+We have sampled 400k records from each of Twitter (2,360,148 records) at 17%, News (1,010,242 records) at 39% and Blog (899,288 records) at 44% of the underlying data.  This should give a good representation of the data and larger samples would take a long time to run.
+
+
+## Create Ngrams
+
+To create an effective text predictor, we need to look at the structure of the sentances.
+
+N-Grams break the words up into chunks that are easy to analyse i.e. 2-gram (hello-there), 3-gram (hello-there-are) 4-gram (hello-there-are-many) 5-gram (hello-there-are-many-words).
+
+Some thought needs to be given to cleaning the data and to whether we include stop words (e.g. and, the, are).
+
+To begin with, I will create 2,3,4-grams both with and without the stop words.
+
+These will be exported to csv to create coding efficiency for model building steps.
+
+N-grams with only 1 observation will be excluded to reduce the table sizes.
+
+Analysis of the 1,2,3,4,5-grams are shown below the section on model building.
+
+## Text Prediction - Katz Backoff Model
+
+For text prediction, I will use the n-grams to create a loose approximation of the Katz Backoff Model.
+
+The model starts by looking for string matches in the highest n-grams (I invesetigated up to 7-grams but due to dataset size and lack of matches am working with 5-grams as a maximum for my model).  If a match is found in the 5-gram table, calculate the probability of a correct match by the observations from the test dataset.
+
+Then, I will search down to lower levels of n-gram calculating the probability of each variable prediction and compare the likelihood of a correct prediction in the words.
+
+For example the sentence:  "The end of the" produces lots of matches in the 5-grams:
+
+ - "the end of the day"  - 0.024% of the observed (the maximum)
+ - "the end of the year" - 0.018% of the oberved
+
+In the 4-grams, the results are the same but the probabilities lower:
+
+ - "end of the day"  - 0.009%
+ - "end of the year" - 0.007%
+
+The 3-grams:
+
+ - "of the year" - 0.022%
+ - "of the day"  - 0.017%
+
+So, the result of the prediction would choose "day" as the most likely word based on the cleaned data.
+
+As a final back-stop the 2-gram is available, however that should hold a lower weighting than the higher order n-grams as shown below the prediction would give a very different response:
+
+ - "the first" - 0.084% (maximum probabiltiy)
+ - "the same"  - 0.065%
+ - ...
+ - "the day"   - 0.030% 
+ - "the year"  - 0.026%
+
+More complex approaches are available including probability smoothing for sparse or un-observed n-grams as described here:
+
+https://en.wikipedia.org/wiki/Katz%27s_back-off_model
+
+My initial model will aim to be fairly simple as above with the possibility to enhance further once it is working.
+
+## N-Gram Word-Chart, Word-Clouds and Creation of the Raw Files for Modelling
+
+Each code block loads a "Corpus" for the ngram, joins the 3 files and creates the summary visulalisations.  The N-grams are stored in .csv format to avoid needing to re-run time-consuming code at the start of the mdoelling phase.
+
+###Process the 1-grams and provide a barplot and word cloud of the 25 most prevalent
+```{r oneGramStop, eval=FALSE}
+oneGramStop<-load.corpus.and.parse(files="all",corpus.dir="stopsample",encoding="ANSI",splitting.rule=" ",ngram.size = 1)
+
+  #package the 3 datasets together and aggregate
+  oneStop <- as.data.frame(aggregate(cbind(Freq) ~ Var1, rbind(as.data.frame(table(oneGramStop$blogSample)),as.data.frame(table(oneGramStop$newsSample)),as.data.frame(table(oneGramStop$twitterSample))), sum))
+  oneStop<-oneStop[order(-oneStop$Freq),]
+  oneStopSlim<-oneStop[oneStop$Freq>1,]  #cut anything fewer than 1 example
+  
+  ##create a word count chart
+  par(mar=c(3,5,1,1))
+  barplot(oneStopSlim[1:25,]$Freq, las = 2, names.arg = oneStopSlim[1:25,]$Var1,
+          col ="hotpink", main ="Most frequent words",
+          ylab = "Word frequencies")
+  
+  #create word cloud
+  oneCloud<-wordcloud2(oneStopSlim[1:150, ], size = 1.5)
+  
+  saveRDS(oneStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\oneStopSlim.rds")
+dev.off()
+  saveRDS(oneCloud,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\oneCloud.rds")
+  
+  write.csv(oneStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\input\\oneStop.csv")
+```
+
+```{r one, cache=TRUE, echo=FALSE}
+oneStopSlim<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\oneStopSlim.rds")
+barplot(oneStopSlim[1:25,]$Freq, las = 2, names.arg = oneStopSlim[1:25,]$Var1,
+        col ="hotpink", main ="Most frequent words",
+        ylab = "Word frequencies")
+oneCloud<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\oneCloud.rds")
+oneCloud
+
+```
+
+
+###Process the 2-grams and provide a barplot and word cloud of the 25 most prevalent
+```{r twoGramStop, eval=FALSE}
+twoGramStop<-load.corpus.and.parse(files="all",corpus.dir="stopsample",encoding="ANSI",splitting.rule=" ",ngram.size = 2)
+
+  #package the 3 datasets together and aggregate
+  twoStop <- as.data.frame(aggregate(cbind(Freq) ~ Var1, rbind(as.data.frame(table(twoGramStop$blogSample)),as.data.frame(table(twoGramStop$newsSample)),as.data.frame(table(twoGramStop$twitterSample))), sum))
+  twoStop<-twoStop[order(-twoStop$Freq),]
+  twoStopSlim<-twoStop[twoStop$Freq>1,]  #cut anything fewer than 1 example
+  
+  ##create a word count chart
+  par(mar=c(4,6,1,1))
+  barplot(twoStopSlim[1:25,]$Freq, las = 2, names.arg = twoStopSlim[1:25,]$Var1,
+          col ="hotpink", main ="Most frequent words",
+          ylab = "Word frequencies")
+  
+  #create word cloud
+  twoCloud<-wordcloud2(twoStopSlim[1:150, ], size = 1)
+    
+  saveRDS(twoStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\twoStopSlim.rds")
+dev.off()
+  saveRDS(twoCloud,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\twoCloud.rds")
+  
+  #cut anything fewer than 1 
+  write.csv(twoStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\input\\twoStop.csv")
+```
+
+```{r two, cache=TRUE, echo=FALSE}
+twoStopSlim<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\twoStopSlim.rds")
+barplot(twoStopSlim[1:25,]$Freq, las = 2, names.arg = twoStopSlim[1:25,]$Var1,
+        col ="hotpink", main ="Most frequent words",
+        ylab = "Word frequencies")
+twoCloud<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\twoCloud.rds")
+twoCloud
+
+```
+
+###Process the 3-grams and provide a barplot and word cloud of the 25 most prevalent
+```{r threeGramStop, eval=FALSE}
+threeGramStop<-load.corpus.and.parse(files="all",corpus.dir="stopsample",encoding="ANSI",splitting.rule=" ",ngram.size = 3)
+  #package the 3 datasets together and aggregate
+  threeStop <- as.data.frame(aggregate(cbind(Freq) ~ Var1, rbind(as.data.frame(table(threeGramStop$blogSample)),as.data.frame(table(threeGramStop$newsSample)),as.data.frame(table(threeGramStop$twitterSample))), sum))
+  threeStop<-threeStop[order(-threeStop$Freq),]
+  threeStopSlim<-threeStop[threeStop$Freq>1,]  #cut anything fewer than 1 example
+  
+  ##create a word count chart
+  par(mar=c(8,4,1,1))
+  barplot(threeStopSlim[1:25,]$Freq, las = 2, names.arg = threeStopSlim[1:25,]$Var1,
+          col ="hotpink", main ="Most frequent words",
+          ylab = "Word frequencies")
+  
+  #create word cloud
+  threeCloud<-wordcloud2(threeStopSlim[1:150, ], size = .75)
+  
+  saveRDS(threeStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\threeStopSlim.rds")
+dev.off()
+  saveRDS(threeCloud,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\threeCloud.rds")
+  
+  write.csv(threeStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\input\\threeStop.csv")
+```
+
+```{r three, cache=TRUE, echo=FALSE}
+threeStopSlim<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\threeStopSlim.rds")
+threeCloud<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\threeCloud.rds")
+barplot(threeStopSlim[1:25,]$Freq, las = 2, names.arg = threeStopSlim[1:25,]$Var1,
+        col ="hotpink", main ="Most frequent words",
+        ylab = "Word frequencies")
+threeCloud
+
+```
+
+###Process the 4-grams and provide a barplot and word cloud of the 25 most prevalent
+```{r fourGramStop, eval=FALSE}
+fourGramStop<-load.corpus.and.parse(files="all",corpus.dir="stopsample",encoding="ANSI",splitting.rule=" ",ngram.size = 4)
+
+  #package the 3 datasets together and aggregate
+  fourStop <- as.data.frame(aggregate(cbind(Freq) ~ Var1, rbind(as.data.frame(table(fourGramStop$blogSample)),as.data.frame(table(fourGramStop$newsSample)),as.data.frame(table(fourGramStop$twitterSample))), sum))
+  fourStop<-fourStop[order(-fourStop$Freq),]
+  fourStopSlim<-fourStop[fourStop$Freq>1,]  #cut anything fewer than 1 example
+  
+  ##create a word count chart
+  par(mar=c(9,4,1,1))
+  barplot(fourStopSlim[1:25,]$Freq, las = 2, names.arg = fourStopSlim[1:25,]$Var1,
+          col ="hotpink", main ="Most frequent words",
+          ylab = "Word frequencies")
+  
+  #create word cloud
+  fourCloud<-wordcloud2(fourStopSlim[1:150, ], size = .5)
+  
+    saveRDS(fourStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fourStopSlim.rds")
+dev.off()
+  saveRDS(fourCloud,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fourCloud.rds")
+  
+  write.csv(fourStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\input\\fourStop.csv")
+```
+
+```{r four, cache=TRUE, echo=FALSE}
+fourStopSlim<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fourStopSlim.rds")
+fourCloud<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fourCloud.rds")
+barplot(fourStopSlim[1:25,]$Freq, las = 2, names.arg = fourStopSlim[1:25,]$Var1,
+        col ="hotpink", main ="Most frequent words",
+        ylab = "Word frequencies")
+fourCloud
+
+```
+
+###Process the 2-grams and provide a barplot of the 25 most prevalent
+NB The wordcloud and charts \re too large to generate correctly here so are excluded.
+```{r fiveGramStop, eval=FALSE}
+fiveGramStop<-load.corpus.and.parse(files="all",corpus.dir="stopsample",encoding="ANSI",splitting.rule=" ",ngram.size = 5)
+
+  #package the 3 datasets together and aggregate
+  fiveStop <- as.data.frame(aggregate(cbind(Freq) ~ Var1, rbind(as.data.frame(table(fiveGramStop$blogSample)),as.data.frame(table(fiveGramStop$newsSample)),as.data.frame(table(fiveGramStop$twitterSample))), sum))
+  fiveStop<-fiveStop[order(-fiveStop$Freq),]
+  fiveStopSlim<-fiveStop[fiveStop$Freq>1,]  #cut anything fewer than 1 example
+  
+  ##create a word count chart
+  par(mar=c(10,4,1,1))
+  barplot(fiveStopSlim[1:25,]$Freq, las = 2, names.arg = fiveStopSlim[1:25,]$Var1,
+          col ="hotpink", main ="Most frequent words",
+          ylab = "Word frequencies")
+  
+  #create word cloud
+  fiveCloud<-wordcloud2(fiveStopSlim[1:150, ], size = .5)
+  
+    saveRDS(fiveStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fiveStopSlim.rds")
+dev.off()
+  saveRDS(fiveCloud,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fiveCloud.rds")
+  
+  write.csv(fiveStopSlim,"C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\input\\fiveStop.csv")
+```
+
+```{r five, cache=TRUE, eval=FALSE, include=FALSE, echo=FALSE}
+fiveStopSlim<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\charts\\fiveStopSlim.rds")
+#fiveCloud<-readRDS("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 #Exploration\\charts\\fiveCloud.rds")
+#barplot(fiveStopSlim[1:25,]$Freq, las = 2, names.arg = fiveStopSlim[1:25,]$Var1,
+#        col ="hotpink", main ="Most frequent words",
+#        ylab = "Word frequencies")
+#fiveCloud
+
+```
+
+
+
+
+## Appendices - Extract and Sample Data
+
+### Original File Download
+
+The original data are available on the weblink here:
+
+https://stats.stackexchange.com/questions/164372/what-is-vectorsource-and-vcorpus-in-tm-text-mining-package-in-r
+
+...and downloaded here:
+
+```{r download, eval=FALSE}
+file<-"https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+#download.file(file,"raw.zip")
+```
+
+### Install Required Packages
+
+```{r install, warning=FALSE, message=FALSE}
+library(stylo)      #corpus and ngrams
+library(tm)         #NLP/text analysis
+library(wordcloud2) #create the word cloud
+```
+
+### Initial Data Load
+
+Now load the data using readlines and sample - currently using 400k records from each dataset.  The encoding step helps handle awkward characters in the data.  We also clean emojis from the twitter feed.  Lastly we take a sample for train and test.
+
+```{r Corpus, eval=FALSE}
+#read the files
+file1 <- "C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\1 Data Exploration\\en_US\\twitterClean.txt"
+file2 <- "C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\1 Data Exploration\\en_US\\en_US.blogs.txt"
+file3 <- "C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\1 Data Exploration\\en_US_clean\\en_US.news_clean.txt"
+
+#selecct UTF-8 to handle special charactors
+twitter <- readLines(file1, skipNul = TRUE,encoding="UTF-8")
+blog <- readLines(file2, skipNul = TRUE,encoding="UTF-8")
+news <- readLines(file3, skipNul = TRUE,encoding="UTF-8")
+
+#clean twitter
+twitterClean<-gsub("[^\x01-\x7F]", "", twitter)
+
+#create samples for next part of the analysis (10,000)
+#Make some values NA so that we can predict to fill them...
+sampSize<-400000
+#set seed for reproducibility:
+set.seed(123);
+selectTW <- rbinom(length(twitterClean),size=1,prob=(sampSize/length(twitterClean)))==1
+selectNW <- rbinom(length(news)[1],size=1,prob=(sampSize/length(news)))==1
+selectBL <- rbinom(length(blog)[1],size=1,prob=(sampSize/length(blog)))==1
+
+twitterSample<-twitterClean[selectTW];twitterTest<-twitterClean[-selectTW];
+newsSample<-news[selectNW];newsTest<-news[-selectNW];
+blogSample<-blog[selectBL];blogTest<-blog[-selectBL];
+
+#outsample
+testTW <- rbinom(length(twitterTest),size=1,prob=(sampSize/length(twitterTest)))==1
+testNW <- rbinom(length(newsTest)[1],size=1,prob=(sampSize/length(newsTest)))==1
+testBL <- rbinom(length(blogTest)[1],size=1,prob=(sampSize/length(blogTest)))==1
+
+twitterTest<-twitterTest[testTW]
+newsTest<-newsTest[testNW]
+blogTest<-blogTest[testBL]
+length(twitterTest);length(newsTest);length(blogTest)
+
+#export to a new location for non-sequential running
+setwd("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\sample\\")
+writeLines(con = file("twitterSample.txt"),twitterSample)
+writeLines(con = file("newsSample.txt"),newsSample)
+writeLines(con = file("blogSample.txt"),blogSample)
+
+setwd("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\test\\")
+writeLines(con = file("twitterTest.txt"),twitterTest)
+writeLines(con = file("newsTest.txt"),newsTest)
+writeLines(con = file("blogTest.txt"),blogTest)
+```
+### Now Clean Up The Text
+
+At first attempt stop-words were removed but then added back as this imporves the initial view of predictivity.
+
+Other text processing completed
+ - set to lower case
+ - remove numbers
+ - remove non-alphabet characters
+ - remove @user and #hashtags
+ - remove duplicate spaces
+ 
+ This gives cleaners datasets for the n-grams and text prediction later.
+
+```{r cleanup, eval=FALSE}
+#remove non-printable charactors, and convert "NULL" charecters to ASCII
+#set to lower case
+#remove stop words and twitter @users and #hashtags
+stopWords<-c(c("rt","RT","amp","u.s.","u.s","p.m.","p.m","gt","g.t.","g.t","lt","l.t.","l.t","ny","n.y.","b","c","d","e","f","g","h","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"))  #add RT,rt to stopwords to clean up twitter
+
+
+
+twitterStopSample<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(twitterSample,"ASCII","UTF-8","")))))),stopWords))
+twitterStopTest<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(twitterTest,"ASCII","UTF-8","")))))),stopWords))
+newsStopSample<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(iconv(newsSample,"latin1","ASCII"),"ASCII","UTF-8","")))))),stopWords))
+newsStopTest<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(iconv(newsTest,"latin1","ASCII"),"ASCII","UTF-8","")))))),stopWords))
+blogStopSample<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(iconv(blogSample,"latin1","ASCII"),"ASCII","UTF-8","")))))),stopWords))
+blogStopTest<-gsub("'","",removeWords(trimws(gsub("\\s+"," ",gsub("\\s+|[^[:alnum:][:space:]']|[0-9]+", " ",gsub("\\s[#@]\\S+","",tolower(iconv(iconv(blogTest,"latin1","ASCII"),"ASCII","UTF-8","")))))),stopWords))
+
+
+
+#export to a new location for non-sequential running
+setwd("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\stopsample\\")
+writeLines(con = file("twitterSample.txt"),twitterStopSample)
+writeLines(con = file("newsSample.txt"),newsStopSample)
+writeLines(con = file("blogSample.txt"),blogStopSample)
+
+setwd("C:\\Nick\\07 R\\6JohnHopkins\\10 Capstone Project\\2 Exploration\\stoptest\\")
+writeLines(con = file("twitterTest.txt"),twitterStopTest)
+writeLines(con = file("newsTest.txt"),newsStopTest)
+writeLines(con = file("blogTest.txt"),blogStopTest)
+```
